@@ -1,0 +1,108 @@
+
+import csv
+import os
+import time
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from pathlib import Path
+
+COUNTRIES = {
+    "US": "United States",
+    "GB": "United Kingdom",
+    "DE": "Germany",
+    "FR": "France",
+    "IT": "Italy",
+    "ES": "Spain",
+}
+
+OUTPUT = Path("data/google_trends.csv")
+FEED_URL = "https://trends.google.com/trending/rss?geo={}"
+
+def fetch_country(code, country_name):
+    url = FEED_URL.format(code)
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; NewsAgent/1.0)"}
+    )
+
+    with urllib.request.urlopen(request, timeout=25) as response:
+        xml_data = response.read()
+
+    root = ET.fromstring(xml_data)
+    rows = []
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    for item in root.findall(".//item"):
+        title = item.findtext("title", default="").strip()
+        link = item.findtext("link", default="").strip()
+        pub_date = item.findtext("pubDate", default="").strip()
+
+        traffic = ""
+        for element in item:
+            if element.tag.endswith("approx_traffic"):
+                traffic = (element.text or "").strip()
+                break
+
+        if title:
+            rows.append({
+                "checked_at_utc": checked_at,
+                "country_code": code,
+                "country": country_name,
+                "trend": title,
+                "approx_traffic": traffic,
+                "published": pub_date,
+                "google_trends_link": link,
+            })
+
+    return rows
+
+def main():
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    all_rows = []
+
+    for code, country_name in COUNTRIES.items():
+        try:
+            rows = fetch_country(code, country_name)
+            all_rows.extend(rows)
+            print(f"OK: {country_name}: collected {len(rows)} trends")
+        except Exception as exc:
+            print(f"WARNING: {country_name}: {type(exc).__name__}: {exc}")
+
+        time.sleep(2)
+
+    if not all_rows:
+        raise SystemExit(
+            "No trends collected. The feed may be unavailable; see the log above."
+        )
+
+    fieldnames = [
+        "checked_at_utc", "country_code", "country", "trend",
+        "approx_traffic", "published", "google_trends_link"
+    ]
+
+    existing_rows = []
+    if OUTPUT.exists():
+        with OUTPUT.open("r", encoding="utf-8", newline="") as file:
+            existing_rows = list(csv.DictReader(file))
+
+    # Keep old results and avoid saving the same country/trend twice.
+    known = {(r.get("country_code"), r.get("trend")) for r in existing_rows}
+    new_rows = [
+        row for row in all_rows
+        if (row["country_code"], row["trend"]) not in known
+    ]
+
+    write_header = not OUTPUT.exists() or OUTPUT.stat().st_size == 0
+    with OUTPUT.open("a", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(new_rows)
+
+    print(f"Collected {len(all_rows)} trends; added {len(new_rows)} new rows.")
+    print(f"Saved to {OUTPUT}")
+
+if __name__ == "__main__":
+    main()
