@@ -1,0 +1,12 @@
+
+name: News Agent Setup Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm the workflow works
+        run: echo "My US and Europe News Agent is working!"
